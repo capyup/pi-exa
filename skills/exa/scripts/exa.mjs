@@ -66,7 +66,7 @@ async function getExa() {
 	} catch (err) {
 		die(
 			"EXA_SDK_MISSING",
-			`Could not import exa-js (${err.message}). The skill package may not have been installed cleanly. Try: pi update https://github.com/lulucatdev/pi-exa.git`,
+			`Could not import exa-js (${err.message}). The skill package may not have been installed cleanly. Try: pi update https://github.com/capyup/pi-exa.git`,
 		);
 	}
 	const Exa = mod.default ?? mod.Exa;

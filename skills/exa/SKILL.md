@@ -124,7 +124,7 @@ The CLI exits non-zero with a clear `EXA_*` prefix on stderr:
 - `EXA_HTTP_<code>` → surface the message; investigate before retrying.
 - `EXA_NETWORK` → transient. One retry is fine; otherwise stop.
 - `EXA_SDK_MISSING` → the package wasn't installed cleanly. Tell the user
-  to run `pi update https://github.com/lulucatdev/pi-exa.git`.
+  to run `pi update https://github.com/capyup/pi-exa.git`.
 
 ## Advanced usage
 

@@ -36,7 +36,7 @@ usage instructions only enter context when the skill triggers.
 ## Install
 
 ```bash
-pi install git:github.com/lulucatdev/pi-exa
+pi install git:github.com/capyup/pi-exa
 ```
 
 This clones the repo, runs `npm install` to pull `exa-js`, registers the
@@ -102,7 +102,7 @@ will not.
 
 ## Migration from v0.2.x (MCP) and v0.1.x (bespoke tools)
 
-1. `pi update https://github.com/lulucatdev/pi-exa.git`
+1. `pi update https://github.com/capyup/pi-exa.git`
 2. Your existing key in `~/.pi/exa.config.json` is reused; no need to
    re-run `/exa-auth` unless you want to change it.
 3. (Optional) Open `~/.pi/agent/mcp.json` and remove the `exa` entry
