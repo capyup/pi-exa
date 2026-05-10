@@ -1,7 +1,7 @@
 {
   "name": "pi-exa",
-  "version": "0.2.0",
-  "description": "Thin Exa MCP configuration helper for pi: stores the API key and provisions the mcpServers.exa entry so pi-mcp-adapter can expose Exa's official remote MCP tools without the permanent context cost.",
+  "version": "0.3.0",
+  "description": "Exa web research for pi via a skill + local CLI. Uses the official exa-js SDK directly — no MCP server, no adapter, ~120 tokens of permanent context.",
   "repository": {
     "type": "git",
     "url": "https://github.com/lulucatdev/pi-exa.git"
@@ -11,16 +11,19 @@
   "keywords": [
     "pi-package",
     "pi-extension",
+    "pi-skill",
     "exa",
-    "mcp",
-    "mcp-config"
+    "web-search",
+    "research"
   ],
   "pi": {
-    "extensions": [
-      "./extensions"
-    ]
+    "extensions": ["./extensions"],
+    "skills": ["./skills"]
+  },
+  "dependencies": {
+    "exa-js": "^2.12.1"
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "^0.74.0"
   }
 }
