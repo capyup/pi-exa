@@ -19,11 +19,11 @@ disappear, an adapter dependency).
 
 v0.3 takes a different shape:
 
-- A **skill** (`skills/exa/SKILL.md`) lives at the metadata layer — only
+- A **skill** (`skills/pi-exa/SKILL.md`) lives at the metadata layer — only
   its name and description (~120 tokens) sit in the system prompt
   permanently. The body loads on demand when the agent decides a task
   matches.
-- A **local Node CLI** (`skills/exa/scripts/exa.mjs`) does the actual
+- A **local Node CLI** (`skills/pi-exa/scripts/exa.mjs`) does the actual
   work, importing `exa-js` directly. The agent invokes it through `bash`,
   reads the markdown output, moves on.
 - A tiny **extension** (`extensions/exa/index.ts`) only exposes

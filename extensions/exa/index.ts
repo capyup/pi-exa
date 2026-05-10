@@ -2,9 +2,9 @@
  * pi-exa — minimal API key manager for the Exa web-research skill.
  *
  * Architecture (v0.3.x):
- *   - The actual Exa calls happen in skills/exa/scripts/exa.mjs, a small
+ *   - The actual Exa calls happen in skills/pi-exa/scripts/exa.mjs, a small
  *     Node CLI that imports exa-js directly. No MCP server, no adapter.
- *   - The skill (skills/exa/SKILL.md) teaches the model how and when to
+ *   - The skill (skills/pi-exa/SKILL.md) teaches the model how and when to
  *     invoke that CLI. Only the skill metadata (~120 tokens) sits in the
  *     system prompt; the body loads on demand. No registerTool here.
  *   - This extension only exposes two slash commands:
