@@ -1,37 +1,30 @@
 # pi-exa
 
-Exa web research for [pi](https://github.com/badlogic/pi-mono), via a small
-**skill + local CLI**. Calls Exa directly through the official
-[`exa-js`](https://www.npmjs.com/package/exa-js) SDK — no MCP server, no
-adapter, no `mcp.json` to provision.
+Exa web research for [pi](https://github.com/badlogic/pi-mono). Calls Exa
+directly through the official [`exa-js`](https://www.npmjs.com/package/exa-js)
+SDK — no MCP server, no adapter, no `mcp.json` to provision.
 
-## Why this design
+## Architecture (v0.4)
 
-Web-search tools are a context-cost trap. The natural instinct is to
-register `exa-search`, `exa-fetch`, `exa-answer` etc. as first-class tools
-so the model can call them directly — but that means **every tool's
-JSON schema and description sits in the system prompt for every turn**,
-even on sessions that never search anything. v0.1.x of pi-exa registered
-nine such tools (~750 tokens permanent); v0.2.x switched to MCP and got
-that down to ~400 tokens but introduced its own fragility (an opaque
-remote MCP server, an `mcp.json` file that has to exist or all tools
-disappear, an adapter dependency).
+v0.4 registers **five first-class tools** (`exa_search`, `exa_similar`,
+`exa_fetch`, `exa_answer`, `exa_research`) plus a **prompt template** for
+the `/exa` command. The agent can now invoke Exa directly as a tool call —
+no bash parsing, no skill-body guessing, no "maybe the model decides to load
+the skill" uncertainty.
 
-v0.3 takes a different shape:
+The **skill** (`skills/pi-exa/SKILL.md`) and **CLI**
+(`skills/pi-exa/scripts/exa.mjs`) are kept as a fallback: when the user
+uses natural language ("search the web for ...") without `/exa`, the skill
+still teaches the agent how to call the CLI via bash.
 
-- A **skill** (`skills/pi-exa/SKILL.md`) lives at the metadata layer — only
-  its name and description (~120 tokens) sit in the system prompt
-  permanently. The body loads on demand when the agent decides a task
-  matches.
-- A **local Node CLI** (`skills/pi-exa/scripts/exa.mjs`) does the actual
-  work, importing `exa-js` directly. The agent invokes it through `bash`,
-  reads the markdown output, moves on.
-- A tiny **extension** (`extensions/exa/index.ts`) only exposes
-  `/exa-auth` and `/exa-status`. No `registerTool`, no MCP config, no
-  state.
+Layers:
 
-Permanent context cost: **~120 tokens** for the skill metadata. Detailed
-usage instructions only enter context when the skill triggers.
+| Layer | Role | Permanent context |
+|---|---|---|
+| **Tools** (`exa_search`, `exa_similar`, `exa_fetch`, `exa_answer`, `exa_research`) | Direct tool calls — highest hit rate | ~500 tokens (5 schemas, no promptSnippets) |
+| **Prompt** (`prompts/exa.md` via `/exa`) | Explicit trigger, loads decision tree into context | ~15 tokens (minimal front matter) |
+| **Skill** (`skills/pi-exa/SKILL.md`) | Natural-language fallback | ~15 tokens (minimal front matter) |
+| **CLI** (`scripts/exa.mjs`) | Actual workhorse, shared by all paths | 0 |
 
 ## Install
 
@@ -42,7 +35,7 @@ pi install npm:@capyup/pi-exa
 (Or `pi install git:github.com/capyup/pi-exa` if you want to track `main`
 directly.)
 
-Either form pulls `exa-js` and registers the extension and the skill.
+Either form pulls `exa-js` and registers the extension, skill, and prompt.
 
 Then save your API key (get one from <https://dashboard.exa.ai>):
 
@@ -50,8 +43,8 @@ Then save your API key (get one from <https://dashboard.exa.ai>):
 /exa-auth <your-exa-api-key>
 ```
 
-That's it. The CLI re-reads the key file on every call, so no `/reload`
-is needed.
+The CLI and tools re-read the key file on every call, so no `/reload` is
+needed after auth changes.
 
 To verify:
 
@@ -61,23 +54,50 @@ To verify:
 
 ## Usage
 
-You don't normally invoke this directly — the skill activates whenever a
-prompt looks like web research and tells the agent to use the bundled
-CLI. If you want to force-load the skill instructions or use it
-directly:
+### Fast path: `/exa` (recommended)
+
+Type `/exa` followed by your request. The prompt template loads and instructs
+the agent to call the right tool directly:
 
 ```text
-/skill:pi-exa
+/exa 最近关于 Claude Code 的新闻
+/exa 找和这篇文章类似的 https://example.com/article
+/exa 总结 https://exa.ai/docs
+/exa 谁是 Anthropic 的 CEO
+/exa 写一份关于 AI 编程助手市场的深度调研报告
 ```
 
-The CLI itself is plain shell:
+Hit rate: **100%** — the prompt template explicitly says "call `exa_search`"
+(or `exa_similar` / `exa_fetch` / `exa_answer` / `exa_research`), so the model never misses.
+
+### Natural-language path
+
+Just ask in plain language. The skill metadata (~15 tokens) sits in the
+system prompt permanently; when the model decides the task matches, it loads
+the skill body and learns the CLI syntax. This works but is slightly less
+reliable than `/exa` because it depends on the model's intent classification.
+
+```text
+帮我搜一下最近的 AI 新闻
+这个链接说了什么？https://example.com/article
+```
+
+### Direct tool calls (agent-driven)
+
+The model can also invoke the tools on its own without `/exa` or skill
+triggering, because the tool schemas are always in the system prompt. This
+happens when the agent is confident a web search is needed.
+
+### CLI (for humans or scripts)
 
 ```bash
 # from the skill directory:
 ./scripts/exa.mjs status
 ./scripts/exa.mjs search "anthropic claude code release notes" --days 30 --num 5
+./scripts/exa.mjs similar https://exa.ai/blog/introducing-exa --num 5
 ./scripts/exa.mjs fetch https://exa.ai/docs/sdks/javascript-sdk --mode summary
 ./scripts/exa.mjs answer "Who is the current CEO of Anthropic?"
+./scripts/exa.mjs research "Compare the top 5 AI coding assistants in 2025, their pricing, and key differentiators"
 ```
 
 Add `--help` to any subcommand for the full option list.
@@ -85,7 +105,8 @@ Add `--help` to any subcommand for the full option list.
 ## Slash commands
 
 | Command | What it does |
-| --- | --- |
+|---|---|
+| `/exa <request>` | Load the Exa prompt template and trigger tool-based research. |
 | `/exa-auth <key>` | Save the Exa API key to `~/.pi/exa.config.json` (mode `0600`). |
 | `/exa-auth --clear` | Forget the saved key. |
 | `/exa-status` | Show whether a key is in place and where it came from. |
@@ -98,32 +119,40 @@ Add `--help` to any subcommand for the full option list.
 This package does **not** touch `~/.pi/agent/mcp.json`,
 `~/.config/mcp/mcp.json`, `.mcp.json`, or `.pi/mcp.json`.
 
-If you used v0.2.x and have an `mcpServers.exa` entry in
-`~/.pi/agent/mcp.json` that you no longer want, delete it manually — pi-exa
-will not.
+## Migration from earlier versions
 
-## Migration from v0.2.x (MCP) and v0.1.x (bespoke tools)
+### v0.3.x → v0.4.x
 
-1. `pi update npm:@capyup/pi-exa` (or `pi update https://github.com/capyup/pi-exa.git` if you installed from git)
-2. Your existing key in `~/.pi/exa.config.json` is reused; no need to
-   re-run `/exa-auth` unless you want to change it.
-3. (Optional) Open `~/.pi/agent/mcp.json` and remove the `exa` entry
-   under `mcpServers` — pi-exa no longer manages or needs it.
-4. (Optional) `pi remove npm:pi-mcp-adapter` if no other package uses it.
-5. Restart pi or `/reload`. The skill will now show up in your
-   `available_skills` list.
+1. `pi update npm:@capyup/pi-exa` (or `pi update https://github.com/capyup/pi-exa.git`)
+2. Your existing key in `~/.pi/exa.config.json` is reused.
+3. `/reload` or restart pi.
+4. The five new tools (`exa_search`, `exa_similar`, `exa_fetch`, `exa_answer`, `exa_research`) will appear
+   in your tool list. `/exa` will be available as a slash command.
 
-**Tool name remap (v0.1.x → v0.3.x):** there are no tools to remap. The
-agent decides when to invoke `scripts/exa.mjs` based on the skill
-description; it doesn't need a 1:1 replacement for the old tool names.
+### v0.2.x (MCP) → v0.4.x
+
+Follow the v0.3 migration steps first if you skipped that version, then the
+v0.4 steps above.
+
+### v0.1.x (bespoke tools) → v0.4.x
+
+The old tool names are gone. The new tools are `exa_search`, `exa_similar`, `exa_fetch`,
+`exa_answer`, `exa_research`. No manual remap is needed — the agent uses them automatically.
 
 ## Token-cost comparison
 
 | Version | Permanent context cost | Failure modes |
-| --- | --- | --- |
+|---|---|---|
 | v0.1.x (9 bespoke tools + routing prose) | ~750 tokens | tool name drift; you-pay-even-if-unused |
 | v0.2.x (MCP, 2 direct tools) | ~400 tokens + MCP proxy overhead | mcp.json missing; remote MCP unreachable; adapter version mismatch |
-| **v0.3.x (skill + CLI)** | **~120 tokens** (skill metadata) | key file missing (clear error from CLI) |
+| v0.3.x (skill + CLI) | ~120 tokens (skill metadata) | **hit rate depends on model guessing** |
+| **v0.4.x (tools + skill + /exa prompt)** | **~500 tokens (5 tool schemas)** | **near-100% hit rate via `/exa`** |
+
+v0.4 trades a moderate permanent-context increase (~380 tokens vs v0.3) for a
+massive hit-rate improvement plus powerful tools (`exa_similar` for finding
+related content and `exa_research` for deep investigation).
+If you want the absolute minimum permanent cost, stay on v0.3.x; if you want
+the agent to actually do web research when you ask, use v0.4.x.
 
 ## License
 

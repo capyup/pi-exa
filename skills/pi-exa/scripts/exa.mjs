@@ -5,8 +5,10 @@
  * Subcommands:
  *   status                                 show key state
  *   search <query>  [opts]                 web search, returns top results
+ *   similar <url>   [opts]                 find pages similar to a given URL
  *   fetch  <url> [<url> ...] [opts]        fetch page contents
  *   answer <question> [opts]               synthesized answer with citations
+ *   research <instructions> [opts]           deep multi-step research with Exa
  *
  * Exit codes:
  *   0  success
@@ -157,6 +159,8 @@ const SEARCH_OPTS = {
 	type: { type: "string", short: "t" }, // auto | neural | keyword | hybrid | deep-lite | deep | deep-reasoning
 	full: { type: "boolean" },
 	"max-chars": { type: "string" },
+	"system-prompt": { type: "string" },
+	"output-schema": { type: "string" },
 	json: { type: "boolean" },
 	help: { type: "boolean", short: "h" },
 };
@@ -173,6 +177,8 @@ const SEARCH_HELP = `usage: exa search "<query>" [options]
   -t, --type T           auto (default) | neural | keyword | hybrid | deep-lite | deep | deep-reasoning
       --full             return full text (~5000 chars / result) instead of highlights
       --max-chars N      override text char budget per result (with --full)
+      --system-prompt S  system prompt to guide the LLM (deep search types only)
+      --output-schema J  JSON schema for structured deep-search output
       --json             machine-readable JSON instead of markdown
 `;
 
@@ -212,6 +218,14 @@ async function cmdSearch(argv) {
 		opts.contents = { text: { maxCharacters: max } };
 	} else {
 		opts.contents = { highlights: { numSentences: 3, highlightsPerUrl: 2 } };
+	}
+	if (parsed.values["system-prompt"]) opts.systemPrompt = parsed.values["system-prompt"];
+	if (parsed.values["output-schema"]) {
+		try {
+			opts.outputSchema = JSON.parse(parsed.values["output-schema"]);
+		} catch (e) {
+			die("EXA_USAGE", `Invalid --output-schema JSON: ${e.message}`);
+		}
 	}
 
 	const exa = await getExa();
@@ -267,6 +281,9 @@ async function cmdSearch(argv) {
 const FETCH_OPTS = {
 	mode: { type: "string", short: "m" }, // text | summary | highlights
 	"max-chars": { type: "string" },
+	livecrawl: { type: "string" }, // never | fallback | always | auto | preferred
+	subpages: { type: "string" },
+	"subpage-target": { type: "string" },
 	json: { type: "boolean" },
 	help: { type: "boolean", short: "h" },
 };
@@ -275,6 +292,9 @@ const FETCH_HELP = `usage: exa fetch <url> [<url> ...] [options]
 
   -m, --mode MODE      text (default) | summary | highlights
       --max-chars N    char budget per page (default 5000 for text)
+      --livecrawl M    never | fallback | always | auto | preferred (default: auto)
+      --subpages N     number of subpages to extract per URL (0-10)
+      --subpage-target T  fuzzy text to match subpages (e.g. "about")
       --json           machine-readable JSON instead of markdown
 `;
 
@@ -299,6 +319,9 @@ async function cmdFetch(argv) {
 	else if (mode === "summary") opts.summary = true;
 	else if (mode === "highlights") opts.highlights = { numSentences: 3, highlightsPerUrl: 3 };
 	else die("EXA_USAGE", `Unknown --mode: ${mode}`);
+	if (parsed.values.livecrawl) opts.livecrawl = parsed.values.livecrawl;
+	if (parsed.values.subpages) opts.subpages = Number(parsed.values.subpages);
+	if (parsed.values["subpage-target"]) opts.subpageTarget = parsed.values["subpage-target"];
 
 	const exa = await getExa();
 	const res = await callExa(() => exa.getContents(urls, opts));
@@ -337,6 +360,7 @@ async function cmdFetch(argv) {
 const ANSWER_OPTS = {
 	location: { type: "string", short: "l" },
 	model: { type: "string" },
+	"system-prompt": { type: "string" },
 	json: { type: "boolean" },
 	help: { type: "boolean", short: "h" },
 };
@@ -345,6 +369,7 @@ const ANSWER_HELP = `usage: exa answer "<question>" [options]
 
   -l, --location CC    ISO country code for location-aware answers (e.g. US, JP)
       --model NAME     override answer model (default exa)
+      --system-prompt S  system prompt to guide the answer style
       --json           machine-readable JSON instead of markdown
 `;
 
@@ -365,6 +390,7 @@ async function cmdAnswer(argv) {
 	const opts = { text: true };
 	if (parsed.values.location) opts.userLocation = parsed.values.location;
 	if (parsed.values.model) opts.model = parsed.values.model;
+	if (parsed.values["system-prompt"]) opts.systemPrompt = parsed.values["system-prompt"];
 
 	const exa = await getExa();
 	const res = await callExa(() => exa.answer(question, opts));
@@ -388,6 +414,213 @@ async function cmdAnswer(argv) {
 	process.stdout.write(`${lines.join("\n")}\n`);
 }
 
+// ─── similar ────────────────────────────────────────────────────────────
+
+const SIMILAR_OPTS = {
+	num: { type: "string", short: "n" },
+	"exclude-source": { type: "boolean" },
+	full: { type: "boolean" },
+	"max-chars": { type: "string" },
+	json: { type: "boolean" },
+	help: { type: "boolean", short: "h" },
+};
+
+const SIMILAR_HELP = `usage: exa similar <url> [options]
+
+  -n, --num N            number of similar results (default 5, max 25)
+      --exclude-source   do not include the source URL itself in results
+      --full             return full text (~5000 chars / result)
+      --max-chars N      override text char budget per result (with --full)
+      --json             machine-readable JSON instead of markdown
+`;
+
+async function cmdSimilar(argv) {
+	let parsed;
+	try {
+		parsed = parseArgs({ args: argv, options: SIMILAR_OPTS, allowPositionals: true });
+	} catch (e) {
+		die("EXA_USAGE", e.message);
+	}
+	if (parsed.values.help) {
+		process.stdout.write(SIMILAR_HELP);
+		return;
+	}
+	const url = parsed.positionals[0]?.trim();
+	if (!url) die("EXA_USAGE", `Missing URL.\n${SIMILAR_HELP}`);
+
+	const numResults = Math.min(25, Math.max(1, Number(parsed.values.num ?? 5)));
+	const opts = { numResults };
+	if (parsed.values["exclude-source"]) opts.excludeSourceDomain = true;
+	if (parsed.values.full) {
+		const max = Number(parsed.values["max-chars"] ?? 5000);
+		opts.contents = { text: { maxCharacters: max } };
+	} else {
+		opts.contents = { highlights: { numSentences: 3, highlightsPerUrl: 2 } };
+	}
+
+	const exa = await getExa();
+	const res = await callExa(() => exa.findSimilar(url, opts));
+
+	if (parsed.values.json) {
+		process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
+		return;
+	}
+
+	const lines = [];
+	lines.push(`# Exa similar to: ${url}`);
+	const count = res.results?.length ?? 0;
+	if (!count) {
+		lines.push("");
+		lines.push("No similar results.");
+		process.stdout.write(`${lines.join("\n")}\n`);
+		return;
+	}
+	res.results.forEach((r, i) => {
+		const head = [
+			`${i + 1}. ${squish(r.title) || "(no title)"}`,
+			hostOf(r.url),
+			formatDate(r.publishedDate),
+		]
+			.filter(Boolean)
+			.join(" — ");
+		lines.push("");
+		lines.push(head);
+		lines.push(`   ${r.url}`);
+		if (parsed.values.full) {
+			const text = clip(r.text ?? "", Number(parsed.values["max-chars"] ?? 5000));
+			if (text) lines.push(`   ${text.replace(/\n/g, "\n   ")}`);
+		} else {
+			const highlights = Array.isArray(r.highlights) ? r.highlights : [];
+			for (const h of highlights) {
+				lines.push(`   • ${clip(h, 350)}`);
+			}
+			if (!highlights.length && r.summary) {
+				lines.push(`   • ${clip(r.summary, 350)}`);
+			}
+		}
+	});
+	if (res.costDollars?.total != null) {
+		lines.push("");
+		lines.push(`_cost: $${res.costDollars.total.toFixed(4)}_`);
+	}
+	process.stdout.write(`${lines.join("\n")}\n`);
+}
+
+// ─── research ───────────────────────────────────────────────────────────
+
+const RESEARCH_OPTS = {
+	model: { type: "string", short: "m" }, // exa-research-fast | exa-research | exa-research-pro
+	"max-wait": { type: "string" },
+	"output-schema": { type: "string" },
+	json: { type: "boolean" },
+	help: { type: "boolean", short: "h" },
+};
+
+const RESEARCH_HELP = `usage: exa research "<instructions>" [options]
+
+  -m, --model MODEL    exa-research-fast | exa-research (default) | exa-research-pro
+      --max-wait MS    max time to wait for completion in ms (default 300000 = 5min)
+      --output-schema J  JSON schema for structured research output
+      --json           machine-readable JSON instead of markdown
+`;
+
+async function cmdResearch(argv) {
+	let parsed;
+	try {
+		parsed = parseArgs({ args: argv, options: RESEARCH_OPTS, allowPositionals: true });
+	} catch (e) {
+		die("EXA_USAGE", e.message);
+	}
+	if (parsed.values.help) {
+		process.stdout.write(RESEARCH_HELP);
+		return;
+	}
+	const instructions = parsed.positionals.join(" ").trim();
+	if (!instructions) die("EXA_USAGE", `Missing instructions.\n${RESEARCH_HELP}`);
+
+	const model = parsed.values.model ?? "exa-research";
+	const maxWait = Number(parsed.values["max-wait"] ?? 300_000);
+	const pollInterval = 5_000;
+
+	const exa = await getExa();
+
+	// Build create params
+	const createParams = { instructions, model };
+	if (parsed.values["output-schema"]) {
+		try {
+			createParams.outputSchema = JSON.parse(parsed.values["output-schema"]);
+		} catch (e) {
+			die("EXA_USAGE", `Invalid --output-schema JSON: ${e.message}`);
+		}
+	}
+
+	// Create the research request
+	process.stderr.write(`Creating research request...\n`);
+	const created = await callExa(() => exa.research.create(createParams));
+	const researchId = created.researchId;
+	process.stderr.write(`Research ID: ${researchId} (status: ${created.status})\n`);
+
+	// Poll until finished
+	const start = Date.now();
+	let lastStatus = created.status;
+	while (Date.now() - start < maxWait) {
+		await new Promise((r) => setTimeout(r, pollInterval));
+		const status = await callExa(() => exa.research.get(researchId));
+		if (status.status !== lastStatus) {
+			lastStatus = status.status;
+			process.stderr.write(`Status: ${lastStatus}\n`);
+		}
+		if (status.status === "completed" || status.status === "failed" || status.status === "canceled") {
+			// finished
+			if (parsed.values.json) {
+				process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
+				return;
+			}
+
+			const lines = [];
+			lines.push(`# Exa Research: ${instructions}`);
+			lines.push(`Model: ${model}`);
+			lines.push(`Status: ${status.status}`);
+			lines.push(`Research ID: ${researchId}`);
+
+			if (status.status === "completed") {
+				const output = status.output;
+				if (output?.content) {
+					lines.push("");
+					lines.push("---");
+					lines.push("");
+					lines.push(squish(output.content));
+				}
+				if (status.costDollars) {
+					lines.push("");
+					lines.push(
+						`_Cost: $${status.costDollars.total.toFixed(4)} | ` +
+						`searches: ${status.costDollars.numSearches} | ` +
+						`pages: ${status.costDollars.numPages} | ` +
+						`tokens: ${status.costDollars.reasoningTokens}_`,
+					);
+				}
+			} else if (status.status === "failed") {
+				lines.push("");
+				lines.push(`Error: ${status.error || "Unknown error"}`);
+			} else {
+				lines.push("");
+				lines.push("Research was canceled.");
+			}
+
+			process.stdout.write(`${lines.join("\n")}\n`);
+			return;
+		}
+	}
+
+	// timeout — return the ID so caller can poll later
+	die(
+		"EXA_TIMEOUT",
+		`Research ${researchId} did not finish within ${maxWait}ms. ` +
+			`Current status: ${lastStatus}. Resume polling manually or re-run with --max-wait.`,
+	);
+}
+
 // ─── help ─────────────────────────────────────────────────────────────
 
 const TOP_HELP = `pi-exa CLI — Exa web research
@@ -397,8 +630,10 @@ usage: exa <subcommand> [options]
 Subcommands:
   status                 show whether the API key is configured
   search "<query>"       semantic web search; returns titles + URLs + highlights
-  fetch  <url> [...]     fetch page text / summary / highlights for known URLs
-  answer "<question>"    synthesized answer with citations
+  similar <url>            find pages similar to the given URL
+  fetch  <url> [...]       fetch page text / summary / highlights for known URLs
+  answer "<question>"      synthesized answer with citations
+  research "<instructions>"  deep multi-step research with automated search & analysis
 
 Run "exa <subcommand> --help" for subcommand-specific options.
 Key file: ${KEY_PATH}
@@ -427,6 +662,12 @@ switch (sub) {
 		break;
 	case "answer":
 		await cmdAnswer(rest);
+		break;
+	case "similar":
+		await cmdSimilar(rest);
+		break;
+	case "research":
+		await cmdResearch(rest);
 		break;
 	default:
 		die("EXA_USAGE", `Unknown subcommand: ${sub}\n${TOP_HELP}`);
