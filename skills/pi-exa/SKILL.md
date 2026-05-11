@@ -1,21 +1,17 @@
 ---
 name: pi-exa
 description: >-
-  Exa web-research skill. Use this whenever the user needs information from
-  the open web — current events, recent news, tech blog posts, papers,
-  company info, product pages, or anything time-sensitive or post-cutoff.
-  Also use when the user gives a URL and asks what's on it, what it says,
-  or wants a summary. Even if the user just says "look that up" or "search
-  the web", use this skill. CRITICAL: also use this for any factual claim
-  about a named person's current role (CEO, founder, etc.), a product's
-  current version number, current prices, current company status, or any
-  "who is / what is / what version" question — these change over time
-  and your training data is stale. A 2-second exa_answer is cheaper than
-  giving a confidently wrong answer. This package exposes five first-class
-  tools (exa_search, exa_similar, exa_fetch, exa_answer, exa_research)
-  that are already visible in the system prompt; call them directly. Do
-  NOT use for code/library API documentation (Context7 is better) or for
-  repos and gists where the gh CLI works fine.
+  Exa web-research skill. Use whenever the user needs information from the
+  open web — current events, news, blog posts, papers, company info, product
+  pages, or anything time-sensitive. Also use when the user gives a URL and
+  asks what's on it or wants a summary. CRITICAL: also use for any factual
+  claim about a named person's current role (CEO, founder), a product's
+  current version, current prices, current company status, or any "who is /
+  what is / what version" question — these change over time. A 2-second
+  exa_answer is cheaper than a confidently wrong answer. Five tools:
+  exa_search, exa_similar, exa_fetch, exa_answer, exa_research — call them
+  directly. Do NOT use for code/library API docs (Context7 is better) or
+  repos/gists (gh CLI).
 ---
 
 # pi-exa — Exa web research
